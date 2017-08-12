@@ -1,0 +1,5 @@
+﻿r, c
+lb0, ub0, lb1, ub1 (infinite if empty)
+a00,      a01,  (<,=,>,)    b0
+a10,      a11,  (<,=,>,)    b1
+c0,       c1 
