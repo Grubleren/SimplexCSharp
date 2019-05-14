@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using System.IO;
 using System.Drawing;
 using System.Globalization;
+using System.Collections.Generic;
 
 namespace SimplexCSharp
 {
@@ -11,23 +12,29 @@ namespace SimplexCSharp
         double epsilon = 0.0000000000001;
         new struct Bounds
         {
-            public double x;
-            public double y;
+            public double lower;
+            public double upper;
         }
 
         int count;
 
-        int noRows;
-        int noColumns;
-        int rightSideIndex;
-        int noArtificials;
+        int nConstraints;
+        int nVariables;
+        int nRows;
+        int nSlags;
+        int nArtificials;
+        int slagIndex;
+        int varibleIndex;
+        int righthandSideIndex;
 
         double[][] tableau;
         double[] zFunction;
-
         double[] wFunction;
+        int[] basis;
+        double[] solution;
 
-        Random random = new Random(2730);
+        bool[] allowedRows;
+        bool[] allowedColumns;
 
         public Form1()
         {
@@ -36,100 +43,38 @@ namespace SimplexCSharp
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            string[] line;
             string inputDataPath = @"C:..\..\TestData5.txt";
             StreamReader reader = new StreamReader(inputDataPath);
 
-            string s = reader.ReadLine();
-            string[] size = s.Split(',');
-            int noConstraints = int.Parse(size[0]);
-            int noVariables = int.Parse(size[1]);
-            noColumns = noVariables + 1;
+            string s = SkipComments(reader);
 
-            Bounds[] boundaries = new Bounds[noVariables];
-            s = reader.ReadLine();
-            string[] limits = s.Split(',');
+            ProblemSize(s);
 
-            int countUpperLimit = 0;
-            for (int i = 0; i < noVariables; i++)
-            {
-                boundaries[i].x = !limits[2 * i].Contains("inf") ? double.Parse(limits[2 * i], CultureInfo.InvariantCulture) : double.MinValue;
-                boundaries[i].y = !limits[2 * i + 1].Contains("inf") ? double.Parse(limits[2 * i + 1], CultureInfo.InvariantCulture) : double.MaxValue;
-                if (boundaries[i].y != double.MaxValue)
-                    countUpperLimit++;
-            }
+            Bounds[] boundaries = new Bounds[nVariables];
 
-            noRows = noConstraints + countUpperLimit;
+            GetBoundaries(reader, boundaries);
 
-            noArtificials = noRows;
-            int noSlags = noRows;
-            rightSideIndex = noArtificials + noSlags + noColumns - 1;
+            AllocateTableauAndObjectfunction();
 
-            zFunction = new double[noArtificials + noSlags + noVariables + 1];
-            wFunction = new double[noArtificials + noSlags + noVariables + 1];
-            tableau = new double[noRows][];
-            for (int i = 0; i < noRows; i++)
-                tableau[i] = new double[noArtificials + noSlags + noVariables + 1];
+            AddConstraints(reader, boundaries);
 
-            double c;
-            for ( int i = 0; i < noConstraints; i++)
-            {
-                s = reader.ReadLine();
-                line = s.Split(',');
-                c = 0;
-                for (int j = 0; j < noVariables; j++)
-                {
-                    double d = double.Parse(line[j], CultureInfo.InvariantCulture);
-                    tableau[i][noArtificials + noSlags + j] = d;
-                    c += boundaries[j].x != double.MinValue ? boundaries[j].x * d : 0;
-                }
-                tableau[i][noArtificials + noSlags + noVariables] = double.Parse(line[noVariables + 1], CultureInfo.InvariantCulture) - c;
+            AddUpperLimitConstraints(reader, boundaries);
 
-                if (line[noVariables].Contains("<"))
-                    tableau[i][noArtificials + i] = 1;
-                if (line[noVariables].Contains(">"))
-                    tableau[i][noArtificials + i] = -1;
-                if (tableau[i][noArtificials + noSlags + noVariables] < 0)
-                    for (int j = 0; j < noArtificials + noSlags + noColumns; j++)
-                        tableau[i][j] = -tableau[i][j];
+            AddObjectFunction(reader);
 
-                tableau[i][i] = 1;
-            }
+            allowedRows = new bool[nRows];
+            allowedColumns = new bool[righthandSideIndex + 1];
 
-            int count = noConstraints;
-            for (int j = 0; j < noVariables; j++)
-            {
-                if (boundaries[j].y != double.MaxValue)
-                {
-                    tableau[count][noArtificials + noSlags + j] = 1;
-                    tableau[count][noArtificials + noSlags + noVariables] = boundaries[j].y - boundaries[j].x;
-                    tableau[count][count] = 1;
-                    tableau[count][count + noConstraints + countUpperLimit] = 1;
-                    count++;
-                }
-            }
+            RemoveUnbounded(boundaries);
 
-            s = reader.ReadLine();
-            line = s.Split(',');
-            c = 0;
-            for (int j = 0; j < noVariables; j++)
-            {
-                zFunction[noArtificials + noSlags + j] = -double.Parse(line[j], CultureInfo.InvariantCulture);
-            }
-            zFunction[noArtificials + noSlags + noVariables] = -double.Parse(line[noVariables], CultureInfo.InvariantCulture);
-            
-            for (int i = 0; i < noRows; i++)
-            {
-                for (int j = noArtificials; j < noArtificials + noSlags + noColumns; j++)
-                {
-                    wFunction[j] -= tableau[i][j];
-                }
-            }
+            AddArtificials();
+
+            AddArtificialObjectFunction(reader);
 
             reader.Close();
 
             PrintTableau();
-            
+
             bool found = false;
 
             if (PhaseOne())
@@ -138,11 +83,63 @@ namespace SimplexCSharp
                 found = PhaseTwo();
                 // if found: zFunc[last] is max of org. zFunc
             }
-                Console.WriteLine(found);
+
+            if (found)
+            {
+                for (int i = 0; i < righthandSideIndex; i++)
+                {
+                    if (allowedColumns[i])
+                    {
+                        int row = InBasis(i);
+                        double solu;
+                        if (row >= 0)
+                            solu = tableau[row][righthandSideIndex];
+                        else
+                            solu = 0;
+                        solution[i] = solu;
+                    }
+                }
+
+                for (int i = varibleIndex; i < righthandSideIndex; i++)
+                {
+                    if (!allowedColumns[i])
+                    {
+                        int row = InBasis(i);
+                        double solu = tableau[row][righthandSideIndex];
+                        for (int j = 0; j < righthandSideIndex; j++)
+                        {
+                            if (allowedColumns[j])
+                                solu -= tableau[row][j] * solution[j];
+
+                        }
+                        solution[i] = solu;
+                    }
+                }
+
+                for (int i = varibleIndex; i < righthandSideIndex; i++)
+                {
+                    if (allowedColumns[i])
+                    {
+                        solution[i] += boundaries[i - varibleIndex].lower;
+                    }
+                }
+
+
+                Console.WriteLine("Artificials:");
+                for (int i = 0; i < slagIndex; i++)
+                    Console.WriteLine("{0:0.######}", solution[i]);
+                Console.WriteLine("Slags:");
+                for (int i = slagIndex; i < varibleIndex; i++)
+                    Console.WriteLine("{0:0.######}", solution[i]);
+                Console.WriteLine("Variables");
+                for (int i = varibleIndex; i < righthandSideIndex; i++)
+                    Console.WriteLine("{0:0.######}", solution[i]);
+            }
+            else
+                Console.WriteLine("No solution");
             PrintTableau();
 
-
-                this.Close();
+            this.Close();
         }
 
         private bool PhaseOne()
@@ -157,7 +154,7 @@ namespace SimplexCSharp
                 incommingBasis = FindIncommingBasis(0, wFunction);
                 if (incommingBasis < 0)
                 {
-                    if (Math.Abs(wFunction[rightSideIndex]) < 0.00000001)
+                    if (Math.Abs(wFunction[righthandSideIndex]) < 0.00000001)
                         return true;
                     else
                         return false;
@@ -166,6 +163,8 @@ namespace SimplexCSharp
                 pivotRow = FindPivotRow(incommingBasis);
                 if (pivotRow < 0)
                     return false;
+
+                basis[pivotRow] = incommingBasis;
 
                 Pivoting(incommingBasis, pivotRow, 0);
                 count++;
@@ -179,7 +178,7 @@ namespace SimplexCSharp
             count = 0;
             while (true)
             {
-                incommingBasis = FindIncommingBasis(noArtificials, zFunction);
+                incommingBasis = FindIncommingBasis(nArtificials, zFunction);
                 if (incommingBasis < 0)
                     return true;
 
@@ -187,7 +186,9 @@ namespace SimplexCSharp
                 if (pivotRow < 0)
                     return false;
 
-                Pivoting(incommingBasis, pivotRow, noArtificials);
+                basis[pivotRow] = incommingBasis;
+
+                Pivoting(incommingBasis, pivotRow, nArtificials);
                 count++;
             }
         }
@@ -196,12 +197,15 @@ namespace SimplexCSharp
         {
             int incommingBasis = -1;
 
-            for (int i = startIndex; i < rightSideIndex; i++)
+            for (int i = startIndex; i < righthandSideIndex; i++)
             {
-                if (objectFunction[i] < 0)
+                if (allowedColumns[i])
                 {
-                    incommingBasis = i;
-                    break;
+                    if (objectFunction[i] < 0)
+                    {
+                        incommingBasis = i;
+                        break;
+                    }
                 }
             }
             return incommingBasis;
@@ -215,15 +219,18 @@ namespace SimplexCSharp
 
             double min = double.MaxValue;
 
-            for (int i = 0; i < noRows; i++)
+            for (int i = 0; i < nRows; i++)
             {
-                if (tableau[i][incommingBasis] > 0)
+                if (allowedRows[i])
                 {
-                    ratio = tableau[i][rightSideIndex] / tableau[i][incommingBasis];
-                    if (ratio < min)
+                    if (tableau[i][incommingBasis] > 0)
                     {
-                        min = ratio;
-                        pivotRow = i;
+                        ratio = tableau[i][righthandSideIndex] / tableau[i][incommingBasis];
+                        if (ratio < min)
+                        {
+                            min = ratio;
+                            pivotRow = i;
+                        }
                     }
                 }
             }
@@ -235,51 +242,61 @@ namespace SimplexCSharp
         private void Pivoting(int incomingBasis, int pivotRow, int startIndex)
         {
             double temp = tableau[pivotRow][incomingBasis];
-            for (int i = startIndex; i <= rightSideIndex; i++)
+            for (int i = startIndex; i <= righthandSideIndex; i++)
             {
-                tableau[pivotRow][i] /= temp;
+                if (allowedColumns[i])
+                    tableau[pivotRow][i] /= temp;
             }
 
-            for (int j = 0; j < noRows; j++)
+            for (int j = 0; j < nRows; j++)
             {
-                if (j != pivotRow)
+                if (allowedRows[j])
                 {
-                    temp = tableau[j][incomingBasis];
-                    for (int i = 0; i <= rightSideIndex; i++)
+                    if (j != pivotRow)
                     {
+                        temp = tableau[j][incomingBasis];
+                        for (int i = 0; i <= righthandSideIndex; i++)
                         {
-                            tableau[j][i] -= tableau[pivotRow][i] * temp;
-                            if (Math.Abs(tableau[j][i]) < epsilon)
-                                tableau[j][i] = 0;
+                            {
+                                tableau[j][i] -= tableau[pivotRow][i] * temp;
+                                if (Math.Abs(tableau[j][i]) < epsilon)
+                                    tableau[j][i] = 0;
+                            }
                         }
                     }
                 }
             }
 
             temp = zFunction[incomingBasis];
-            for (int i = startIndex; i <= rightSideIndex; i++)
+            for (int i = startIndex; i <= righthandSideIndex; i++)
             {
-                zFunction[i] -= tableau[pivotRow][i] * temp;
-                if (Math.Abs(zFunction[i]) < epsilon)
-                    zFunction[i] = 0;
+                if (allowedColumns[i])
+                {
+                    zFunction[i] -= tableau[pivotRow][i] * temp;
+                    if (Math.Abs(zFunction[i]) < epsilon)
+                        zFunction[i] = 0;
+                }
             }
 
             if (startIndex == 0)
             {
                 temp = wFunction[incomingBasis];
-                for (int i = 0; i <= rightSideIndex; i++)
+                for (int i = 0; i <= righthandSideIndex; i++)
                 {
-                    wFunction[i] -= tableau[pivotRow][i] * temp;
-                    if (Math.Abs(wFunction[i]) < epsilon)
-                        wFunction[i] = 0;
+                    if (allowedColumns[i])
+                    {
+                        wFunction[i] -= tableau[pivotRow][i] * temp;
+                        if (Math.Abs(wFunction[i]) < epsilon)
+                            wFunction[i] = 0;
+                    }
                 }
             }
-           // PrintTableau();
+            // PrintTableau();
         }
 
         private void PrintTableau()
         {
-            StreamWriter writer = new StreamWriter(@"C:\Users\JHee\Documents\MyData\Tab.txt", false);
+            StreamWriter writer = new StreamWriter(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + @"\Tableau.txt", false);
 
             for (int i = 0; i < tableau.Length; i++)
             {
@@ -291,6 +308,208 @@ namespace SimplexCSharp
             writer.WriteLine();
             writer.Close();
 
+        }
+
+        string SkipComments(StreamReader reader)
+        {
+            string s = reader.ReadLine();
+            while (s[0] == '#')
+                s = reader.ReadLine();
+            return s;
+        }
+
+        void ProblemSize(string s)
+        {
+            string[] size = s.Split(',');
+            nConstraints = int.Parse(size[0]);
+            nVariables = int.Parse(size[1]);
+        }
+
+        void GetBoundaries(StreamReader reader, Bounds[] boundaries)
+        {
+            string s = reader.ReadLine();
+            string[] limits = s.Split(',');
+
+            int countUpperLimit = 0;
+            for (int i = 0; i < nVariables; i++)
+            {
+                boundaries[i].lower = !limits[2 * i].Contains("inf") ? double.Parse(limits[2 * i], CultureInfo.InvariantCulture) : double.MinValue;
+                boundaries[i].upper = !limits[2 * i + 1].Contains("inf") ? double.Parse(limits[2 * i + 1], CultureInfo.InvariantCulture) : double.MaxValue;
+                if (boundaries[i].upper != double.MaxValue)
+                    countUpperLimit++;
+            }
+
+            nRows = nConstraints + countUpperLimit;
+            nSlags = nRows;
+            nArtificials = nRows;
+            slagIndex = nArtificials;
+            varibleIndex = slagIndex + nSlags;
+            righthandSideIndex = nArtificials + nSlags + nVariables;
+        }
+
+        void AllocateTableauAndObjectfunction()
+        {
+            tableau = new double[nRows][];
+            for (int i = 0; i < nRows; i++)
+                tableau[i] = new double[righthandSideIndex + 1];
+
+            zFunction = new double[righthandSideIndex + 1];
+            wFunction = new double[righthandSideIndex + 1];
+            solution = new double[righthandSideIndex];
+            basis = new int[righthandSideIndex];
+
+        }
+
+        void AddConstraints(StreamReader reader, Bounds[] boundaries)
+        {
+            for (int i = 0; i < nConstraints; i++)
+            {
+                string s = reader.ReadLine();
+                string[] line = s.Split(',');
+                double lowerLimitSum = 0;
+                for (int j = 0; j < nVariables; j++)
+                {
+                    double d = double.Parse(line[j], CultureInfo.InvariantCulture);
+                    tableau[i][varibleIndex + j] = d;
+                    lowerLimitSum += boundaries[j].lower != double.MinValue ? boundaries[j].lower * d : 0;
+                }
+                tableau[i][righthandSideIndex] = double.Parse(line[nVariables + 1], CultureInfo.InvariantCulture) - lowerLimitSum;
+
+                if (line[nVariables].Contains("<"))
+                    tableau[i][nArtificials + i] = 1;
+                if (line[nVariables].Contains(">"))
+                    tableau[i][nArtificials + i] = -1;
+                if (tableau[i][righthandSideIndex] < 0)
+                    for (int j = 0; j < righthandSideIndex + 1; j++)
+                        tableau[i][j] = -tableau[i][j];
+            }
+        }
+
+        void AddUpperLimitConstraints(StreamReader reader, Bounds[] boundaries)
+        {
+            int count = nConstraints;
+            for (int j = 0; j < nVariables; j++)
+            {
+                if (boundaries[j].upper != double.MaxValue)
+                {
+                    tableau[count][varibleIndex + j] = 1;
+                    tableau[count][righthandSideIndex] = boundaries[j].upper - (boundaries[j].lower == double.MinValue ? 0 :  boundaries[j].lower);
+                    tableau[count][count + nArtificials] = 1;
+                    count++;
+                }
+            }
+        }
+
+        void AddObjectFunction(StreamReader reader)
+        {
+            string s = reader.ReadLine();
+            string[] line = s.Split(',');
+            for (int j = 0; j < nVariables; j++)
+            {
+                zFunction[varibleIndex + j] = -double.Parse(line[j], CultureInfo.InvariantCulture);
+            }
+            zFunction[righthandSideIndex] = -double.Parse(line[nVariables], CultureInfo.InvariantCulture);
+
+        }
+
+        void RemoveUnbounded(Bounds[] boundaries)
+        {
+            List<int> unbounded = new List<int>();
+            for (int i = 0; i < righthandSideIndex + 1; i++)
+                allowedColumns[i] = true;
+
+            for (int i = 0; i < nVariables; i++)
+            {
+                if (boundaries[i].lower == double.MinValue)
+                {
+                    unbounded.Add(varibleIndex + i);
+                    allowedColumns[varibleIndex + i] = false;
+                }
+            }
+            
+            List<int> freeRows = new List<int>();
+            for (int j = 0; j < nRows; j++)
+            {
+                freeRows.Add(j);
+                allowedRows[j] = true;
+            }
+            for (int n = 0; n < unbounded.Count; n++)
+            {
+                int i = unbounded[n];
+                double max = 0;
+                int maxj = 0;
+                foreach (int j in freeRows)
+                {
+                    if (Math.Abs(tableau[j][i]) > max)
+                    {
+                        max = Math.Abs(tableau[j][i]);
+                        maxj = j;
+                    }
+                }
+                freeRows.Remove(maxj);
+                allowedRows[maxj] = false;
+                basis[maxj] = i;
+                double pivotElement = tableau[maxj][i];
+                for (int k = slagIndex; k < righthandSideIndex + 1; k++)
+                    tableau[maxj][k] /= pivotElement;
+
+                for (int j = 0; j < nRows; j++)
+                {
+                    if (j != maxj)
+                    {
+                        pivotElement = tableau[j][i];
+                        for (int k = slagIndex; k < righthandSideIndex + 1; k++)
+                            tableau[j][k] -= tableau[maxj][k] * pivotElement;
+
+                        if (tableau[j][righthandSideIndex] < 0)
+                            for (int k = slagIndex; k < righthandSideIndex + 1; k++)
+                                tableau[j][k] *= -1;
+                    }
+                }
+
+                pivotElement = zFunction[i];
+                for (int k = slagIndex; k < righthandSideIndex + 1; k++)
+                    zFunction[k] -= tableau[maxj][k] * pivotElement;
+
+            }
+        }
+
+        void AddArtificials()
+        {
+            for (int i = 0; i < nRows; i++)
+                tableau[i][i] = 1;
+
+            for (int i = 0; i < nRows; i++)
+                if (allowedRows[i])
+                    basis[i] = i;
+        }
+
+        void AddArtificialObjectFunction(StreamReader reader)
+        {
+
+            for (int i = 0; i < nRows; i++)
+            {
+                if (allowedRows[i])
+                {
+                    for (int j = slagIndex; j < righthandSideIndex + 1; j++)
+                    {
+                        if (allowedColumns[j])
+                            wFunction[j] -= tableau[i][j];
+                    }
+                }
+            }
+        }
+
+        int InBasis(int column)
+        {
+            int row = -1;
+            for (int i = 0; i < nRows; i++)
+                 if (basis[i] == column)
+                {
+                    row = i;
+                    break;
+                }
+            return row;
         }
     }
 }
