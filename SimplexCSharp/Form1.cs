@@ -37,7 +37,7 @@ namespace SimplexCSharp
         private void Form1_Load(object sender, EventArgs e)
         {
             string[] line;
-            string inputDataPath = @"C:..\..\TestData7.txt";
+            string inputDataPath = @"C:..\..\TestData5.txt";
             StreamReader reader = new StreamReader(inputDataPath);
 
             string s = reader.ReadLine();
@@ -148,7 +148,7 @@ namespace SimplexCSharp
         private bool PhaseOne()
         {
             int incommingBasis;
-            int outgoingBasis;
+            int pivotRow;
 
             count = 0;
             while (true)
@@ -163,11 +163,11 @@ namespace SimplexCSharp
                         return false;
                 }
 
-                outgoingBasis = FindOutgoingBasis(incommingBasis);
-                if (outgoingBasis < 0)
+                pivotRow = FindPivotRow(incommingBasis);
+                if (pivotRow < 0)
                     return false;
 
-                Pivoting(incommingBasis, outgoingBasis, 0);
+                Pivoting(incommingBasis, pivotRow, 0);
                 count++;
             }
         }
@@ -175,7 +175,7 @@ namespace SimplexCSharp
         private bool PhaseTwo()
         {
             int incommingBasis;
-            int outgoingBasis;
+            int pivotRow;
             count = 0;
             while (true)
             {
@@ -183,11 +183,11 @@ namespace SimplexCSharp
                 if (incommingBasis < 0)
                     return true;
 
-                outgoingBasis = FindOutgoingBasis(incommingBasis);
-                if (outgoingBasis < 0)
+                pivotRow = FindPivotRow(incommingBasis);
+                if (pivotRow < 0)
                     return false;
 
-                Pivoting(incommingBasis, outgoingBasis, noArtificials);
+                Pivoting(incommingBasis, pivotRow, noArtificials);
                 count++;
             }
         }
@@ -207,9 +207,9 @@ namespace SimplexCSharp
             return incommingBasis;
         }
 
-        private int FindOutgoingBasis(int incommingBasis)
+        private int FindPivotRow(int incommingBasis)
         {
-            int outgoingBasis = -1;
+            int pivotRow = -1;
 
             double ratio;
 
@@ -223,32 +223,32 @@ namespace SimplexCSharp
                     if (ratio < min)
                     {
                         min = ratio;
-                        outgoingBasis = i;
+                        pivotRow = i;
                     }
                 }
             }
 
-            return outgoingBasis;
+            return pivotRow;
 
         }
 
-        private void Pivoting(int incomingBasis, int outgoingBasis, int startIndex)
+        private void Pivoting(int incomingBasis, int pivotRow, int startIndex)
         {
-            double temp = tableau[outgoingBasis][incomingBasis];
+            double temp = tableau[pivotRow][incomingBasis];
             for (int i = startIndex; i <= rightSideIndex; i++)
             {
-                tableau[outgoingBasis][i] /= temp;
+                tableau[pivotRow][i] /= temp;
             }
 
             for (int j = 0; j < noRows; j++)
             {
-                if (j != outgoingBasis)
+                if (j != pivotRow)
                 {
                     temp = tableau[j][incomingBasis];
                     for (int i = 0; i <= rightSideIndex; i++)
                     {
                         {
-                            tableau[j][i] -= tableau[outgoingBasis][i] * temp;
+                            tableau[j][i] -= tableau[pivotRow][i] * temp;
                             if (Math.Abs(tableau[j][i]) < epsilon)
                                 tableau[j][i] = 0;
                         }
@@ -259,7 +259,7 @@ namespace SimplexCSharp
             temp = zFunction[incomingBasis];
             for (int i = startIndex; i <= rightSideIndex; i++)
             {
-                zFunction[i] -= tableau[outgoingBasis][i] * temp;
+                zFunction[i] -= tableau[pivotRow][i] * temp;
                 if (Math.Abs(zFunction[i]) < epsilon)
                     zFunction[i] = 0;
             }
@@ -269,7 +269,7 @@ namespace SimplexCSharp
                 temp = wFunction[incomingBasis];
                 for (int i = 0; i <= rightSideIndex; i++)
                 {
-                    wFunction[i] -= tableau[outgoingBasis][i] * temp;
+                    wFunction[i] -= tableau[pivotRow][i] * temp;
                     if (Math.Abs(wFunction[i]) < epsilon)
                         wFunction[i] = 0;
                 }
@@ -279,7 +279,7 @@ namespace SimplexCSharp
 
         private void PrintTableau()
         {
-            StreamWriter writer = new StreamWriter(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + @"\Tableau.txt", false); 
+            StreamWriter writer = new StreamWriter(@"C:\Users\JHee\Documents\MyData\Tab.txt", false);
 
             for (int i = 0; i < tableau.Length; i++)
             {

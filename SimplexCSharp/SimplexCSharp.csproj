@@ -112,6 +112,7 @@
     <Content Include="TestData5.txt" />
     <Content Include="TestData6.txt" />
     <Content Include="TestData7.txt" />
+    <Content Include="TestData8.txt" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include="Microsoft.Net.Client.3.5">
