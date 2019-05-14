@@ -37,7 +37,6 @@ namespace SimplexCSharp
         private void Form1_Load(object sender, EventArgs e)
         {
             string[] line;
-//            string inputDataPath = @"C:\Users\Jens Hee\Documents\MyData\simplex.txt";
             string inputDataPath = @"C:..\..\TestData7.txt";
             StreamReader reader = new StreamReader(inputDataPath);
 
@@ -280,7 +279,7 @@ namespace SimplexCSharp
 
         private void PrintTableau()
         {
-            StreamWriter writer = new StreamWriter(@"C:\Users\JHee\Documents\MyData\Tab.txt", false);
+            StreamWriter writer = new StreamWriter(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + @"\Tableau.txt", false); 
 
             for (int i = 0; i < tableau.Length; i++)
             {
